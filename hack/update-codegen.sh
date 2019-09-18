@@ -24,8 +24,8 @@ set -o pipefail
 #                  instead of the $GOPATH directly. For normal projects this can be dropped.
 ../vendor/k8s.io/code-generator/generate-groups.sh \
   "deepcopy,client,informer,lister" \
-  crd-nginx-vhost/pkg/client \
-  crd-nginx-vhost/pkg/apis \
+  github.com/opslib/crd-nginx-vhost/pkg/client \
+  github.com/opslib/crd-nginx-vhost/pkg/apis \
   vhost:v1alpha1 \
   --go-header-file $(pwd)/boilerplate.go.txt \
   --output-base $(pwd)/../../
