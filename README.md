@@ -2,7 +2,40 @@
 
 add vhost by crd
 
-## tips
+## usages 
+
+* update
+
+```
+# cd hack
+# ./update-codegen.sh
+```
+
+* build crd
+
+```
+# go build -o vhost .
+```
+
+* check vhost (no need)
+
+```
+# ./vhost --kubeconfig=/Users/wangsir/.kube/config
+```
+
+* create crd
+
+```
+# kubectl create -f example/crd.yml
+```
+
+* create vhost
+
+```
+kubectl create -f example/example-vhost.yml 
+```
+
+## issues
 
 ```bash
  ✗ go build -o vhost .
