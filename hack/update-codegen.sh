@@ -28,4 +28,4 @@ set -o pipefail
   github.com/opslib/crd-nginx-vhost/pkg/apis \
   vhost:v1alpha1 \
   --go-header-file $(pwd)/boilerplate.go.txt \
-  --output-base $(pwd)/../../
+  --output-base $(pwd)/../../../../

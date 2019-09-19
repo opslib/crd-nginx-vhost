@@ -36,7 +36,7 @@ import (
 	"k8s.io/client-go/util/workqueue"
 	"k8s.io/klog"
 
-	samplev1alpha1 "github.com/opslib/crd-nginx-vhost/pkg/apis/foo/v1alpha1"
+	samplev1alpha1 "github.com/opslib/crd-nginx-vhost/pkg/apis/vhost/v1alpha1"
 	sampleclientset "github.com/opslib/crd-nginx-vhost/pkg/client/clientset/versioned"
 	samplescheme "github.com/opslib/crd-nginx-vhost/pkg/client/clientset/versioned/scheme"
 	sampleinformers "github.com/opslib/crd-nginx-vhost/pkg/client/informers/externalversions/vhost/v1alpha1"
@@ -88,7 +88,7 @@ func NewController(
 	kubeclientset kubernetes.Interface,
 	sampleclientset sampleclientset.Interface,
 	deploymentInformer appsinformers.DeploymentInformer,
-	fooInformer sampleinformers.VhostInformer) *Controller {
+	vhostInformer sampleinformers.VhostInformer) *Controller {
 
 	// Create event broadcaster
 	// Add sample-controller types to the default Kubernetes Scheme so Events can be
@@ -107,7 +107,7 @@ func NewController(
 		deploymentsSynced: deploymentInformer.Informer().HasSynced,
 		vhostsLister:        vhostInformer.Lister(),
 		vhostsSynced:        vhostInformer.Informer().HasSynced,
-		workqueue:         workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), "Foos"),
+		workqueue:         workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), "Vhosts"),
 		recorder:          recorder,
 	}
 
@@ -253,7 +253,7 @@ func (c *Controller) syncHandler(key string) error {
 		// The Foo resource may no longer exist, in which case we stop
 		// processing.
 		if errors.IsNotFound(err) {
-			utilruntime.HandleError(fmt.Errorf("foo '%s' in work queue no longer exists", key))
+			utilruntime.HandleError(fmt.Errorf("vhost '%s' in work queue no longer exists", key))
 			return nil
 		}
 
@@ -373,13 +373,13 @@ func (c *Controller) handleObject(obj interface{}) {
 			return
 		}
 
-		foo, err := c.vhostsLister.Vhosts(object.GetNamespace()).Get(ownerRef.Name)
+		vhost, err := c.vhostsLister.Vhosts(object.GetNamespace()).Get(ownerRef.Name)
 		if err != nil {
 			klog.V(4).Infof("ignoring orphaned object '%s' of vhost '%s'", object.GetSelfLink(), ownerRef.Name)
 			return
 		}
 
-		c.enqueueFoo(foo)
+		c.enqueueFoo(vhost)
 		return
 	}
 }
@@ -387,7 +387,7 @@ func (c *Controller) handleObject(obj interface{}) {
 // newDeployment creates a new Deployment for a Foo resource. It also sets
 // the appropriate OwnerReferences on the resource so handleObject can discover
 // the Foo resource that 'owns' it.
-func newDeployment(foo *samplev1alpha1.Vhost) *appsv1.Deployment {
+func newDeployment(vhost *samplev1alpha1.Vhost) *appsv1.Deployment {
 	labels := map[string]string{
 		"app":        "nginx",
 		"controller": vhost.Name,
