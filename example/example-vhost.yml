@@ -1,0 +1,8 @@
+apiVersion: vhost.newops.cn/v1alpha1
+kind: Vhost
+metadata:
+  name: nginx-vhost
+spec:
+  deploymentName: nginx-vhost-1
+  replicas: 1
+
