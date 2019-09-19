@@ -27,10 +27,12 @@ import (
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/apimachinery/pkg/util/wait"
 	appsinformers "k8s.io/client-go/informers/apps/v1"
+	coreinformers "k8s.io/client-go/informers/core/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/scheme"
 	typedcorev1 "k8s.io/client-go/kubernetes/typed/core/v1"
 	appslisters "k8s.io/client-go/listers/apps/v1"
+	corelisters "k8s.io/client-go/listers/core/v1"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/client-go/util/workqueue"
@@ -57,7 +59,7 @@ const (
 	MessageResourceExists = "Resource %q already exists and is not managed by Foo"
 	// MessageResourceSynced is the message used for an Event fired when a Foo
 	// is synced successfully
-	MessageResourceSynced = "Foo synced successfully"
+	MessageResourceSynced = "Vhost synced successfully"
 )
 
 // Controller is the controller implementation for Foo resources
@@ -69,6 +71,10 @@ type Controller struct {
 
 	deploymentsLister appslisters.DeploymentLister
 	deploymentsSynced cache.InformerSynced
+
+	configmapsLister corelisters.ConfigMapLister
+	configmapsSynced cache.InformerSynced
+
 	vhostsLister        samplelisters.VhostLister
 	vhostsSynced        cache.InformerSynced
 
@@ -78,6 +84,7 @@ type Controller struct {
 	// time, and makes it easy to ensure we are never processing the same item
 	// simultaneously in two different workers.
 	workqueue workqueue.RateLimitingInterface
+
 	// recorder is an event recorder for recording Event resources to the
 	// Kubernetes API.
 	recorder record.EventRecorder
@@ -88,6 +95,7 @@ func NewController(
 	kubeclientset kubernetes.Interface,
 	sampleclientset sampleclientset.Interface,
 	deploymentInformer appsinformers.DeploymentInformer,
+	configmapsInformer coreinformers.ConfigMapInformer,
 	vhostInformer sampleinformers.VhostInformer) *Controller {
 
 	// Create event broadcaster
@@ -105,6 +113,8 @@ func NewController(
 		sampleclientset:   sampleclientset,
 		deploymentsLister: deploymentInformer.Lister(),
 		deploymentsSynced: deploymentInformer.Informer().HasSynced,
+		configmapsLister:  configmapsInformer.Lister(),
+		configmapsSynced:  configmapsInformer.Informer().HasSynced,
 		vhostsLister:        vhostInformer.Lister(),
 		vhostsSynced:        vhostInformer.Informer().HasSynced,
 		workqueue:         workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), "Vhosts"),
@@ -114,11 +124,12 @@ func NewController(
 	klog.Info("Setting up event handlers")
 	// Set up an event handler for when Foo resources change
 	vhostInformer.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
-		AddFunc: controller.enqueueFoo,
+		AddFunc: controller.enqueueVhost,
 		UpdateFunc: func(old, new interface{}) {
-			controller.enqueueFoo(new)
+			controller.enqueueVhost(new)
 		},
 	})
+
 	// Set up an event handler for when Deployment resources change. This
 	// handler will lookup the owner of the given Deployment, and if it is
 	// owned by a Foo resource will enqueue that Foo resource for
@@ -126,8 +137,8 @@ func NewController(
 	// handling Deployment resources. More info on this pattern:
 	// https://github.com/kubernetes/community/blob/8cafef897a22026d42f5e5bb3f104febe7e29830/contributors/devel/controllers.md
 	deploymentInformer.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
-		AddFunc: controller.handleObject,
-		UpdateFunc: func(old, new interface{}) {
+		AddFunc:controller.handleObject,
+		UpdateFunc:func(old, new interface{}) {
 			newDepl := new.(*appsv1.Deployment)
 			oldDepl := old.(*appsv1.Deployment)
 			if newDepl.ResourceVersion == oldDepl.ResourceVersion {
@@ -137,9 +148,21 @@ func NewController(
 			}
 			controller.handleObject(new)
 		},
-		DeleteFunc: controller.handleObject,
+		DeleteFunc:controller.handleObject,
 	})
-
+	// add handler for configmap
+	configmapsInformer.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
+		AddFunc:controller.handleObject,
+		UpdateFunc:func(old, new interface{}) {
+			newCmap := new.(*corev1.ConfigMap)
+			oldCmap := old.(*corev1.ConfigMap)
+			if newCmap.ResourceVersion == oldCmap.ResourceVersion {
+				return
+			}
+			controller.handleObject(new)
+		},
+		DeleteFunc:controller.handleObject,
+	})
 	return controller
 }
 
@@ -156,7 +179,7 @@ func (c *Controller) Run(threadiness int, stopCh <-chan struct{}) error {
 
 	// Wait for the caches to be synced before starting workers
 	klog.Info("Waiting for informer caches to sync")
-	if ok := cache.WaitForCacheSync(stopCh, c.deploymentsSynced, c.vhostsSynced); !ok {
+	if ok := cache.WaitForCacheSync(stopCh, c.deploymentsSynced, c.configmapsSynced, c.vhostsSynced); !ok {
 		return fmt.Errorf("failed to wait for caches to sync")
 	}
 
@@ -260,6 +283,28 @@ func (c *Controller) syncHandler(key string) error {
 		return err
 	}
 
+	// configmap controller
+	configmapName := vhost.Spec.CongigmapName
+	if configmapName == "" {
+		utilruntime.HandleError(fmt.Errorf("%s: configmap name must be specified", key))
+		return nil
+	}
+
+	configmap, err := c.configmapsLister.ConfigMaps(vhost.Namespace).Get(configmapName)
+	if errors.IsNotFound(err) {
+		configmap, err = c.kubeclientset.CoreV1().ConfigMaps(vhost.Namespace).Create(newConfimap(vhost))
+	}
+
+	if err != nil {
+		return err
+	}
+
+	if !metav1.IsControlledBy(configmap, vhost) {
+		msg := fmt.Sprintf(MessageResourceExists, configmap.Name)
+		c.recorder.Event(vhost, corev1.EventTypeWarning, ErrResourceExists, msg)
+		return fmt.Errorf(msg)
+	}
+
 	deploymentName := vhost.Spec.DeploymentName
 	if deploymentName == "" {
 		// We choose to absorb the error here as the worker would requeue the
@@ -308,16 +353,17 @@ func (c *Controller) syncHandler(key string) error {
 
 	// Finally, we update the status block of the Foo resource to reflect the
 	// current state of the world
-	err = c.updateFooStatus(vhost, deployment)
+	err = c.updateVhostStatus(vhost, deployment)
 	if err != nil {
 		return err
 	}
 
+	// send event
 	c.recorder.Event(vhost, corev1.EventTypeNormal, SuccessSynced, MessageResourceSynced)
 	return nil
 }
 
-func (c *Controller) updateFooStatus(vhost *samplev1alpha1.Vhost, deployment *appsv1.Deployment) error {
+func (c *Controller) updateVhostStatus(vhost *samplev1alpha1.Vhost, deployment *appsv1.Deployment) error {
 	// NEVER modify objects from the store. It's a read-only, local cache.
 	// You can use DeepCopy() to make a deep copy of original object and modify this copy
 	// Or create a copy manually for better performance
@@ -331,10 +377,10 @@ func (c *Controller) updateFooStatus(vhost *samplev1alpha1.Vhost, deployment *ap
 	return err
 }
 
-// enqueueFoo takes a Foo resource and converts it into a namespace/name
+// enqueueVhost takes a Foo resource and converts it into a namespace/name
 // string which is then put onto the work queue. This method should *not* be
 // passed resources of any type other than Foo.
-func (c *Controller) enqueueFoo(obj interface{}) {
+func (c *Controller) enqueueVhost(obj interface{}) {
 	var key string
 	var err error
 	if key, err = cache.MetaNamespaceKeyFunc(obj); err != nil {
@@ -379,7 +425,7 @@ func (c *Controller) handleObject(obj interface{}) {
 			return
 		}
 
-		c.enqueueFoo(vhost)
+		c.enqueueVhost(vhost)
 		return
 	}
 }
@@ -392,6 +438,7 @@ func newDeployment(vhost *samplev1alpha1.Vhost) *appsv1.Deployment {
 		"app":        "nginx",
 		"controller": vhost.Name,
 	}
+
 	return &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      vhost.Spec.DeploymentName,
@@ -414,10 +461,46 @@ func newDeployment(vhost *samplev1alpha1.Vhost) *appsv1.Deployment {
 						{
 							Name:  "nginx",
 							Image: "nginx:latest",
+							VolumeMounts: []corev1.VolumeMount{
+								{
+									Name: vhost.Spec.CongigmapName + "-config",
+									MountPath: "/conf",
+								},
+							},
+						},
+					},
+					Volumes: []corev1.Volume{
+						{
+							Name: vhost.Spec.CongigmapName + "-config",
+							VolumeSource: corev1.VolumeSource{
+								ConfigMap: &corev1.ConfigMapVolumeSource{
+									LocalObjectReference: corev1.LocalObjectReference{
+										Name: vhost.Spec.CongigmapName,
+									},
+								},
+							},
 						},
 					},
 				},
 			},
 		},
+	}
+}
+
+// newConfimap
+func newConfimap(vhost *samplev1alpha1.Vhost) *corev1.ConfigMap {
+	data := map[string]string{
+		"a": "aa",
+	}
+	return &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:		vhost.Spec.CongigmapName,
+			Namespace: 	vhost.Namespace,
+			OwnerReferences: []metav1.OwnerReference{
+				*metav1.NewControllerRef(vhost, samplev1alpha1.SchemeGroupVersion.WithKind("vhost")),
+			},
+
+		},
+		Data: data,
 	}
 }

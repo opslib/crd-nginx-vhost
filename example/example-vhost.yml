@@ -1,8 +1,9 @@
 apiVersion: vhost.newops.cn/v1alpha1
 kind: Vhost
 metadata:
-  name: nginx-vhost
+  name: nginx-vhost-2
 spec:
-  deploymentName: nginx-vhost-1
+  deploymentName: nginx-vhost-dp-2
   replicas: 1
+  configmapName: nginx-vhost-cm-2
 

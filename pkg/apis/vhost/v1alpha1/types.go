@@ -36,6 +36,7 @@ type Vhost struct {
 type VhostSpec struct {
 	DeploymentName string `json:"deploymentName"`
 	Replicas       *int32 `json:"replicas"`
+	CongigmapName string `json:"configmapName"`
 }
 
 // VhostStatus is the status for a Vhost resource
