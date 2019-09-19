@@ -4,7 +4,14 @@ add vhost by crd
 
 ## usages 
 
-* update
+* go modules
+
+```
+# go mod vendor #在mod模式下添加旧的目录
+# go mod tidy
+```
+
+* codegen
 
 ```
 # cd hack
